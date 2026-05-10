@@ -1,0 +1,13 @@
+{
+  "name": "renderpdf",
+  "version": "1.0.0",
+  "description": "HTML to PDF Lambda renderer",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^133.0.0",
+    "playwright-core": "^1.49.0"
+  }
+}
