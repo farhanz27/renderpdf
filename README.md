@@ -24,4 +24,4 @@ All requests require an `X-Pdf-Secret` header matching the `PDF_SECRET` Lambda e
 
 ## Deploy
 
-See [infra/README.md](infra/README.md) for full setup and deploy instructions.
+See [docs/deploy.md](docs/deploy.md) for full setup and deploy instructions.

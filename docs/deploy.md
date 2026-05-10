@@ -1,4 +1,4 @@
-# renderpdf — Deploy Guide
+# Deploy Guide
 
 HTML-to-PDF AWS Lambda using Playwright + Chromium, deployed as a container image.
 
