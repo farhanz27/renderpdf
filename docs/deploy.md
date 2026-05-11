@@ -80,14 +80,16 @@ The script will:
 
 Re-run `bash infra/deploy.sh` — it detects the existing function and updates only the image.
 
-## Integrate with Spring Boot
+## Integrate with your app
 
-Set these in your Spring Boot app (environment or `.env`):
+Once deployed, you need two values from the deploy output:
 
 ```
 PDF_LAMBDA_URL=<API URL printed by deploy script>
 PDF_LAMBDA_SECRET=<same PDF_SECRET value>
 ```
+
+Pass these as environment variables (or however your app manages config). Then make a POST request to `PDF_LAMBDA_URL` with the `X-Pdf-Secret` header set to `PDF_LAMBDA_SECRET` and a JSON body containing your `html` string. The response body is the raw PDF binary.
 
 ## Testing manually
 
