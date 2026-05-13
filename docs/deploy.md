@@ -6,6 +6,7 @@ HTML-to-PDF AWS Lambda using Playwright + Chromium, deployed as a container imag
 
 - AWS CLI installed and authenticated via SSO
 - Docker running
+- `jq` installed (`sudo apt install jq`)
 - IAM role for Lambda with `AWSLambdaBasicExecutionRole` policy attached — you need its ARN
 
 ### Set up AWS SSO (one-time)
@@ -53,72 +54,87 @@ aws iam attach-role-policy \
   --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 ```
 
-### 2. Set environment variables
+### 2. Configure `.env`
+
+A `.env` file in the project root is loaded automatically by `make`. It is git-ignored — never commit it.
 
 ```bash
-export AWS_REGION=ap-southeast-1
-export AWS_ACCOUNT_ID=<your 12-digit account id>
-export LAMBDA_ROLE_ARN=arn:aws:iam::<account>:role/renderpdf-lambda-role
-export PDF_SECRET=<random secret string>
+AWS_REGION=ap-southeast-1
+AWS_ACCOUNT_ID=<your 12-digit account id>
+LAMBDA_ROLE_ARN=arn:aws:iam::<account>:role/renderpdf-lambda-role
+PDF_SECRET=<random secret — generate with: openssl rand -hex 32>
+PDF_BUCKET=<globally unique S3 bucket name, e.g. myapp-renderpdf-426315020469>
+
+# Populated automatically after first deploy:
+# PDF_LAMBDA_URL=https://<id>.execute-api.ap-southeast-1.amazonaws.com
 ```
 
-### 3. Run the deploy script
+### 3. Deploy
 
 ```bash
-bash infra/deploy.sh
+cd functions/renderpdf
+make deploy
 ```
 
-The script will:
-1. Authenticate Docker to ECR
-2. Create the ECR repository (if needed)
-3. Build and push the container image
-4. Create or update the Lambda function (512 MB memory, 30s timeout)
-5. Create an API Gateway HTTP API with a catch-all route pointing to the Lambda
-6. Print the API URL
+The deploy script will:
+1. Verify Docker is running, AWS credentials are valid, and the IAM role exists
+2. Create the S3 output bucket (if needed) and block public access
+3. Attach an inline IAM policy granting the Lambda role `s3:PutObject` + `s3:GetObject` on the bucket
+4. Authenticate Docker to ECR
+5. Create the ECR repository (if needed)
+6. Build and push the container image tagged with the current git commit SHA
+7. Create or update the Lambda function (1536 MB memory, 30s timeout)
+8. Create an API Gateway HTTP API with a catch-all route pointing to the Lambda
+9. Save `PDF_LAMBDA_URL` back to `.env` automatically
+
+### 4. Verify
+
+```bash
+make smoke-test
+```
+
+Sends a test HTML payload to the live Lambda, downloads the rendered PDF, and confirms it is a valid PDF file. Expected output ends with:
+```
+PDF document, version 1.4, 1 page(s)
+OK
+```
+
+To open the downloaded `test.pdf`:
+
+```bash
+make open-pdf   # WSL2 / Linux
+```
 
 ## Redeploying after code changes
 
-Re-run `bash infra/deploy.sh` — it detects the existing function and updates only the image.
+```bash
+make deploy
+make smoke-test
+```
+
+Each deploy tags the image with the current git commit SHA, so rollbacks are possible by redeploying an earlier commit.
 
 ## Integrate with your app
 
-Once deployed, you need two values from the deploy output:
+After the first deploy, `.env` contains both values you need:
 
 ```
-PDF_LAMBDA_URL=<API URL printed by deploy script>
-PDF_LAMBDA_SECRET=<same PDF_SECRET value>
+PDF_LAMBDA_URL=<API URL — written automatically by deploy>
+PDF_SECRET=<same value you set in .env>
 ```
 
-Pass these as environment variables (or however your app manages config). Then make a POST request to `PDF_LAMBDA_URL` with the `X-Pdf-Secret` header set to `PDF_LAMBDA_SECRET` and a JSON body containing your `html` string. The response body is the raw PDF binary.
-
-## Testing manually
-
-```bash
-curl -X POST <api-url> \
-  -H "Content-Type: application/json" \
-  -H "X-Pdf-Secret: <your PDF_SECRET>" \
-  -d '{"html":"<html><body><h1>Test</h1></body></html>"}' \
-  --output test.pdf && file test.pdf
-```
-
-Expected output: `PDF document, version 1.4, 1 page(s)`
-
-Open the PDF (WSL2):
-```bash
-explorer.exe test.pdf
-```
-
-Open the PDF (Linux):
-```bash
-xdg-open test.pdf
-```
+POST to `PDF_LAMBDA_URL` with the `X-Pdf-Secret` header and a JSON body containing your `html` string. The response is JSON with a `url` field — a presigned S3 link valid for 5 minutes. Fetch that URL directly to download the PDF (bypasses API Gateway, no 10 MB response limit).
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
+| `ERROR: Docker is not running` | Start Docker Desktop / Docker daemon |
+| `ERROR: AWS credentials not valid` | Run `aws sso login` |
+| `ERROR: IAM role not found` | Run the `aws iam create-role` command in step 1 |
 | `403 Forbidden` | `X-Pdf-Secret` header missing or wrong value |
 | `400 Missing html field` | POST body must be JSON with an `html` key |
-| Response is JSON not PDF | Check CloudWatch logs — likely a Chromium launch error |
-| Lambda timeout | Increase timeout beyond 30s; check CloudWatch logs |
+| `413` response | HTML input exceeds 5 MB limit — reduce inline assets |
+| `{"error":"Render timed out..."}` | Page took >15s to render; simplify HTML or check for network requests |
+| `url` key missing in response | Check CloudWatch logs — likely a Chromium launch error or S3 permission issue |
 | Cold start slow (~15s) | First request after idle extracts Chromium and launches browser — expected |

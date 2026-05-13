@@ -10,17 +10,17 @@ A serverless HTML-to-PDF microservice running on AWS Lambda. Send any HTML strin
 | PDF engine | [Playwright](https://playwright.dev/) + [Chromium](https://github.com/Sparticuz/chromium) |
 | Packaging | Docker (container Lambda) |
 | Registry | Amazon ECR |
-| Compute | AWS Lambda (512 MB, 30s timeout) |
+| Compute | AWS Lambda (1536 MB, 30s timeout) |
+| Storage | Amazon S3 (PDF output) |
 | API | Amazon API Gateway HTTP API |
 
 ## How it works
 
-1. Client POSTs an HTML string with a shared secret header
-2. Lambda passes the HTML to a headless Chromium browser via Playwright
-3. Chromium renders the page and exports it as an A4 PDF
-4. The PDF bytes are returned base64-encoded in the response
+1. Client POSTs an HTML string (≤ 5 MB) with a shared secret header
+2. Lambda renders it with headless Chromium via Playwright (15s deadline)
+3. The PDF is written to S3; a presigned download URL (5 min TTL) is returned
 
-The browser process is warm-started at module load — concurrent and repeat invocations reuse the same instance, keeping render times fast after the initial cold start.
+The browser is warm-started at module load — repeat invocations reuse the same instance. If Chromium crashes, the dead browser is detected and replaced on the next call.
 
 ## API
 
@@ -37,16 +37,29 @@ Body:
 { "html": "<html><body><h1>Hello</h1></body></html>" }
 ```
 
-Response: `application/pdf` binary (base64-encoded via API Gateway).
+Response:
+```json
+{ "url": "https://s3.amazonaws.com/..." }
+```
+
+The `url` is a presigned S3 GET link valid for 5 minutes. Fetch it directly to stream the PDF without going through API Gateway.
 
 ### Quick test
 
 ```bash
-curl -X POST <api-url> \
+make smoke-test
+```
+
+Or manually (values are in `.env`):
+
+```bash
+source .env
+URL=$(curl -s -X POST "$PDF_LAMBDA_URL" \
   -H "Content-Type: application/json" \
-  -H "X-Pdf-Secret: <your-secret>" \
+  -H "X-Pdf-Secret: $PDF_SECRET" \
   -d '{"html":"<html><body><h1>Hello</h1></body></html>"}' \
-  --output out.pdf
+  | jq -r '.url')
+curl -s "$URL" --output out.pdf && file out.pdf
 ```
 
 ## Security
