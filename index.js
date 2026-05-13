@@ -11,18 +11,29 @@ const PRESIGN_TTL_SECONDS = 300;
 const s3 = new S3Client({});
 let browserPromise = null;
 
-function getBrowser() {
-  if (!browserPromise) {
-    browserPromise = (async () => {
-      return playwrightChromium.launch({
-        args: [...chromium.args, '--no-sandbox'],
-        executablePath: await chromium.executablePath(),
-        headless: true,
-      });
-    })().catch(err => {
-      browserPromise = null;
-      throw err;
+function launchBrowser() {
+  browserPromise = (async () => {
+    return playwrightChromium.launch({
+      args: [...chromium.args, '--no-sandbox'],
+      executablePath: await chromium.executablePath(),
+      headless: true,
     });
+  })().catch(err => {
+    browserPromise = null;
+    throw err;
+  });
+  return browserPromise;
+}
+
+async function getBrowser() {
+  if (browserPromise) {
+    const b = await browserPromise;
+    if (!b.isConnected()) {
+      browserPromise = null;
+    }
+  }
+  if (!browserPromise) {
+    launchBrowser();
   }
   return browserPromise;
 }
@@ -64,28 +75,34 @@ exports.handler = async (event) => {
     }
 
     const startMs = Date.now();
-    const b = await getBrowser();
-    let context, page, pdfBytes;
-    try {
-      context = await b.newContext();
-      page = await context.newPage();
-      pdfBytes = await withTimeout(
-        (async () => {
-          await page.setContent(html, { waitUntil: 'load' });
-          await page.emulateMedia({ media: 'print' });
-          return page.pdf({ format: 'A4', printBackground: true });
-        })(),
-        RENDER_TIMEOUT_MS
-      );
-    } catch (renderErr) {
-      // Chromium crash leaves browserPromise pointing at a dead browser — reset so
-      // the next invocation gets a fresh one instead of failing immediately.
-      if (!b.isConnected()) browserPromise = null;
-      console.log(JSON.stringify({ event: 'render_failed', durationMs: Date.now() - startMs, payloadBytes, reason: renderErr.message }));
-      throw renderErr;
-    } finally {
-      await page?.close().catch(() => {});
-      await context?.close().catch(() => {});
+    let pdfBytes;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const b = await getBrowser();
+      let context, page;
+      try {
+        context = await b.newContext();
+        page = await context.newPage();
+        pdfBytes = await withTimeout(
+          (async () => {
+            await page.setContent(html, { waitUntil: 'load' });
+            await page.emulateMedia({ media: 'print' });
+            return page.pdf({ format: 'A4', printBackground: true });
+          })(),
+          RENDER_TIMEOUT_MS
+        );
+        break;
+      } catch (renderErr) {
+        if (!b.isConnected()) browserPromise = null;
+        if (attempt === 0 && !b.isConnected()) {
+          console.log(JSON.stringify({ event: 'browser_reset', reason: renderErr.message }));
+          continue;
+        }
+        console.log(JSON.stringify({ event: 'render_failed', durationMs: Date.now() - startMs, payloadBytes, reason: renderErr.message }));
+        throw renderErr;
+      } finally {
+        await page?.close().catch(() => {});
+        await context?.close().catch(() => {});
+      }
     }
 
     const bucket = process.env.PDF_BUCKET;
