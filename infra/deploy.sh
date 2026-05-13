@@ -82,10 +82,6 @@ aws iam put-role-policy \
 # ---------------------------------------------------------------------------
 # ECR + Docker
 # ---------------------------------------------------------------------------
-echo "==> Authenticating Docker to ECR"
-aws ecr get-login-password --region "${AWS_REGION}" \
-  | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-
 echo "==> Creating ECR repository (ignored if already exists)"
 aws ecr create-repository \
   --repository-name "${ECR_REPO}" \

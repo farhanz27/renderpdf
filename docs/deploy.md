@@ -8,6 +8,27 @@ HTML-to-PDF AWS Lambda using Playwright + Chromium, deployed as a container imag
 - Docker running
 - `jq` installed (`sudo apt install jq`)
 - IAM role for Lambda with `AWSLambdaBasicExecutionRole` policy attached — you need its ARN
+- ECR credential helper installed
+
+### Set up ECR credential helper (one-time, WSL2)
+
+Avoids `docker login` entirely — Docker fetches a fresh ECR token automatically before every push.
+
+```bash
+sudo apt install amazon-ecr-credential-helper
+```
+
+Add to `~/.docker/config.json` (create the file if it doesn't exist):
+
+```json
+{
+  "credHelpers": {
+    "<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com": "ecr-login"
+  }
+}
+```
+
+Replace `<AWS_ACCOUNT_ID>` and `<AWS_REGION>` with your values (e.g. `123456789012.dkr.ecr.ap-southeast-1.amazonaws.com`).
 
 ### Set up AWS SSO (one-time)
 
@@ -131,6 +152,7 @@ POST to `PDF_LAMBDA_URL` with the `X-Pdf-Secret` header and a JSON body containi
 |---|---|
 | `ERROR: Docker is not running` | Start Docker Desktop / Docker daemon |
 | `ERROR: AWS credentials not valid` | Run `aws sso login` |
+| `docker push` fails with `no basic auth credentials` | ECR credential helper not configured — see "Set up ECR credential helper" above |
 | `ERROR: IAM role not found` | Run the `aws iam create-role` command in step 1 |
 | `403 Forbidden` | `X-Pdf-Secret` header missing or wrong value |
 | `400 Missing html field` | POST body must be JSON with an `html` key |
